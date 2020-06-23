@@ -14,6 +14,9 @@ extern "C" {
 #include <SDL_main.h>
 #include <SDL.h>
 
+#include "external/imgui/imgui.h"
+#include "external/imgui_sdl.h"
+
 const int PACKET_SIZE = 1400;
 
 // Packet definition
@@ -59,6 +62,8 @@ int UDP_RECEIVE_ADDRESS_LENGTH = sizeof(UDPRecvAddress);
 SDL_Texture* sdlTexture;
 SDL_Window* sdlWindow;
 SDL_Renderer* sdlRenderer;
+
+ImGuiContext* imGuiContext;
 
 //
 struct UDPInputPacket {
@@ -186,6 +191,15 @@ void initServerSocket() {
 	// AND WILL COST FAR TOO MUCH TIME TO FIGURE OUT WHAT WAS WRONG
 }
 
+// Initialise imGUI
+void initGUI() {
+	imGuiContext = ImGui::CreateContext();
+	ImGui::SetCurrentContext(imGuiContext);
+
+	ImGuiSDL::Initialize(sdlRenderer, FRAME_WIDTH, FRAME_HEIGHT);
+}
+
+
 // Close SDL renderer
 void closeRenderer() {
 
@@ -199,6 +213,7 @@ void closeRenderer() {
 	//Quit SDL subsystems
 	SDL_Quit();
 }
+
 
 // Decode a frame
 // Param frameIndex; the index in the frameMap of the frame to render
@@ -246,6 +261,18 @@ AVFrame* decodeFrame(int frameIndex) {
 	return frame;
 }
 
+// ImGUI render
+void renderGUI() {
+	ImGui::NewFrame();
+
+	ImGui::Begin("game", NULL, NULL);
+	ImGui::Text("Servas");
+	ImGui::End();
+
+	ImGui::Render();
+	ImGuiSDL::Render(ImGui::GetDrawData());
+}
+
 // Render the frame from the given index in the frame map
 void renderFrame(int frameIndex) {
 
@@ -268,6 +295,8 @@ void renderFrame(int frameIndex) {
 
 	// Render texture to screen
 	SDL_RenderCopy(sdlRenderer, sdlTexture, NULL, NULL);
+
+	renderGUI();
 
 	// Update screen
 	SDL_RenderPresent(sdlRenderer);
@@ -421,6 +450,7 @@ int main(int argc, char* args[]) {
 
 	initDecoder();
 	initRenderer();
+	initGUI();
 	initReceiverSocket();
 	initServerSocket();
 
