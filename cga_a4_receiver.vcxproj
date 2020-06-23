@@ -76,8 +76,8 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
-    <IncludePath>D:\dev\uni\CGA\ffmpeg\ffmpeg-4.1.1-win64-dev\include;$(SolutionDir)external\stb;$(SolutionDir)external\SDL2-2.0.12\include;$(IncludePath)</IncludePath>
-    <LibraryPath>D:\dev\uni\CGA\ffmpeg\ffmpeg-4.1.1-win64-dev\lib;$(SolutionDir)external\SDL2-2.0.12\lib\x64;$(LibraryPath)</LibraryPath>
+    <IncludePath>$(SolutionDir)..\ffmpeg\ffmpeg-4.1.1-win64-dev\include;$(SolutionDir)external\stb;$(SolutionDir)external\SDL2-2.0.12\include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(SolutionDir)..\ffmpeg\ffmpeg-4.1.1-win64-dev\lib;$(SolutionDir)external\SDL2-2.0.12\lib\x64;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
