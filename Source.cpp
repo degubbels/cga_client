@@ -64,6 +64,7 @@ SDL_Renderer* sdlRenderer;
 struct UDPInputPacket {
 	SDL_Keycode down[8];
 	SDL_Keycode up[8];
+	bool empty;
 };
 
 // Send socket
@@ -383,22 +384,20 @@ void processInput() {
 		}
 	}
 
-	// Send only if input is available
-	if (inputAvailable) {
+	packet.empty = !inputAvailable;
 
-		//printf("K||send\n");
-		int ret = sendto(
-			UDPSendSocket,
-			(char*)&packet,
-			sizeof(packet),
-			0,
-			(const sockaddr*)&UDPSendAddress,
-			sizeof(UDPSendAddress)
-		);
+	// always send, so we know dt
+	int ret = sendto(
+		UDPSendSocket,
+		(char*)&packet,
+		sizeof(packet),
+		0,
+		(const sockaddr*)&UDPSendAddress,
+		sizeof(UDPSendAddress)
+	);
 
-		if (ret < 0) {
-			printf("UDP packet send failed: %d\n", WSAGetLastError());
-		}
+	if (ret < 0) {
+		printf("UDP packet send failed: %d\n", WSAGetLastError());
 	}
 }
 
