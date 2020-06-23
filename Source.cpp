@@ -13,12 +13,11 @@ extern "C" {
 
 #include <SDL_main.h>
 #include <SDL.h>
-#include "InputServer.cpp"
 
 const int PACKET_SIZE = 1400;
 
 // Packet definition
-struct UDPHeader {
+struct UDPRecvHeader {
 	uint32_t nframe;
 	uint32_t nfrag;
 
@@ -26,8 +25,8 @@ struct UDPHeader {
 	uint32_t framesize;
 };
 
-struct UDPPacket {
-	UDPHeader header;
+struct UDPRecvPacket {
+	UDPRecvHeader header;
 	char packet[PACKET_SIZE] = {0};
 };
 
@@ -41,30 +40,40 @@ const int FRAME_WIDTH = 1280;
 const int FRAME_HEIGHT = 720;
 const AVPixelFormat FRAME_FORMAT = AV_PIX_FMT_YUV420P;
 
+// Codec
 const AVCodecID CODEC_ID = AV_CODEC_ID_MPEG4;
-
 AVCodec* codec;
 AVCodecContext* codecContext;
 
-// Socket
-u_long UDP_ADDRESS = INADDR_ANY;
-u_short UDP_PORT = 8888;
+// Receive Socket
+u_long UDP_RECEIVE_ADDRESS = INADDR_ANY;
+u_short UDP_RECEIVE_PORT = 8888;
 
-sockaddr_in UDPAddress;
-SOCKET UDPSocket;
+sockaddr_in UDPRecvAddress;
+SOCKET UDPRecvSocket;
 
-byte UDPBuffer[PACKET_SIZE + sizeof(UDPHeader)];
-int UDP_ADDRESS_LENGTH = sizeof(UDPAddress);
-
+byte UDPRecvBuffer[PACKET_SIZE + sizeof(UDPRecvHeader)];
+int UDP_RECEIVE_ADDRESS_LENGTH = sizeof(UDPRecvAddress);
 
 // SDL
 SDL_Texture* sdlTexture;
 SDL_Window* sdlWindow;
 SDL_Renderer* sdlRenderer;
 
+//
+struct UDPInputPacket {
+	SDL_Keycode down[8];
+};
 
-// Partly from: https://lazyfoo.net/tutorials/SDL/07_texture_loading_and_rendering/index.php
+// Send socket
+sockaddr_in UDPSendAddress;
+SOCKET UDPSendSocket;
 
+const char* UDP_SEND_ADDRESS = "127.0.0.1";
+const int UDP_SEND_PORT = 8880;
+
+// Should the client stop at the end of this frame
+bool quit;
 
 // Initialise decoder
 void initDecoder() {
@@ -117,8 +126,8 @@ void initRenderer() {
 	sdlTexture = SDL_CreateTexture(sdlRenderer, SDL_PIXELFORMAT_IYUV, SDL_TEXTUREACCESS_STREAMING, FRAME_WIDTH, FRAME_HEIGHT);
 }
 
-// Initialise socket
-void initSocket() {
+// Initialise frame receiver socket
+void initReceiverSocket() {
 
 	// Initialise winsock
 	WSADATA wsaData;
@@ -129,23 +138,50 @@ void initSocket() {
 	}
 
 	// Initialize the socket
-	UDPSocket = socket(PF_INET, SOCK_DGRAM, 0);
-	if (UDPSocket < 0) {
+	UDPRecvSocket = socket(PF_INET, SOCK_DGRAM, 0);
+	if (UDPRecvSocket < 0) {
 		printf("Socket init failed: %d\n", WSAGetLastError());
 		exit(EXIT_FAILURE);
 	}
 
 	// Configure address
-	UDPAddress.sin_family = AF_INET;
-	UDPAddress.sin_addr.s_addr = UDP_ADDRESS;
-	UDPAddress.sin_port = htons(UDP_PORT);
+	UDPRecvAddress.sin_family = AF_INET;
+	UDPRecvAddress.sin_addr.s_addr = UDP_RECEIVE_ADDRESS;
+	UDPRecvAddress.sin_port = htons(UDP_RECEIVE_PORT);
 
 	// Bind socket
-	ret = bind(UDPSocket, (const sockaddr*)&UDPAddress, sizeof(UDPAddress));
+	ret = bind(UDPRecvSocket, (const sockaddr*)&UDPRecvAddress, sizeof(UDPRecvAddress));
 	if (ret != 0) {
 		printf("Socket bind failed: %d\n", WSAGetLastError());
 		exit(EXIT_FAILURE);
 	}
+}
+
+// Initialise input server socket
+void initServerSocket() {
+	// Initialise winsock
+	WSADATA wsaData;
+	int ret = WSAStartup(MAKEWORD(2, 2), &wsaData);
+	if (ret != 0) {
+		printf("WSA init failed: %d\n", WSAGetLastError());
+		exit(EXIT_FAILURE);
+	}
+
+	// Configure address
+	UDPSendAddress.sin_family = AF_INET;
+	UDPSendAddress.sin_addr.s_addr = inet_addr(UDP_SEND_ADDRESS);
+	UDPSendAddress.sin_port = htons(UDP_SEND_PORT);
+
+	// Initialize the socket
+	UDPSendSocket = socket(PF_INET, SOCK_DGRAM, 0);
+	if (UDPSendSocket < 0) {
+		printf("Socket init failed: %d\n", WSAGetLastError());
+		exit(EXIT_FAILURE);
+	}
+
+	// DO NOT, NO, PLEASE DO NOT BIND THE SOCKET!
+	// IT WILL MAKE IT IMPOSSIBLE TO SEND PACKETS
+	// AND WILL COST FAR TOO MUCH TIME TO FIGURE OUT WHAT WAS WRONG
 }
 
 // Close SDL renderer
@@ -208,34 +244,6 @@ AVFrame* decodeFrame(int frameIndex) {
 	return frame;
 }
 
-
-
-/*
-	Wait until the next packet arrives
-	Blocks execution
-*/
-UDPPacket nextPacket() {
-
-	// Receive next udp packet
-	int ret = recvfrom(
-		UDPSocket,
-		(char*)UDPBuffer,
-		PACKET_SIZE + sizeof(UDPHeader),
-		0,
-		(sockaddr*)&UDPAddress,
-		&UDP_ADDRESS_LENGTH
-		);
-
-	// Check for error
-	if (ret < 0) {
-		printf("Receive failure: %d\n", WSAGetLastError());
-		exit(EXIT_FAILURE);
-	}
-
-	// Interpret as packet struct
-	return *(reinterpret_cast<UDPPacket*>(UDPBuffer));
-}
-
 // Render the frame from the given index in the frame map
 void renderFrame(int frameIndex) {
 
@@ -263,9 +271,33 @@ void renderFrame(int frameIndex) {
 	SDL_RenderPresent(sdlRenderer);
 }
 
+// Wait until the next packet arrives
+//	Blocks execution
+UDPRecvPacket nextPacket() {
+
+	// Receive next udp packet
+	int ret = recvfrom(
+		UDPRecvSocket,
+		(char*)UDPRecvBuffer,
+		PACKET_SIZE + sizeof(UDPRecvHeader),
+		0,
+		(sockaddr*)&UDPRecvAddress,
+		&UDP_RECEIVE_ADDRESS_LENGTH
+	);
+
+	// Check for error
+	if (ret < 0) {
+		printf("Receive failure: %d\n", WSAGetLastError());
+		exit(EXIT_FAILURE);
+	}
+
+	// Interpret as packet struct
+	return *(reinterpret_cast<UDPRecvPacket*>(UDPRecvBuffer));
+}
+
 // Add the given packet to the corresponding frame
 // If frame is now complete, render it
-void processPacket(UDPPacket packet) {
+void processPacket(UDPRecvPacket packet) {
 
 	int currentFrame = packet.header.nframe;
 	int fragmentCount = packet.header.nfrags;
@@ -278,7 +310,7 @@ void processPacket(UDPPacket packet) {
 		frameSize.emplace(currentFrame, packet.header.framesize);
 		fragsReceived.emplace(currentFrame, 0);
 
-		printf("Start new frame: %d\n", currentFrame);
+		//printf("Start new frame: %d\n", currentFrame);
 	}
 
 	// Size of this fragment
@@ -302,144 +334,86 @@ void processPacket(UDPPacket packet) {
 	}
 }
 
+// Poll input from sdl
+// If input is available, send the keycodes to the game server
+void processInput() {
+
+	UDPInputPacket packet;
+	bool inputAvailable = false;
+
+	SDL_Event e;
+	int i = 0;
+	while (SDL_PollEvent(&e) != 0) {
+
+		if (i > 8) {
+			printf("Too many concurrent user inputs, some lost");
+		}
+
+		// User requests quit
+		if (e.type == SDL_QUIT) {
+			//quit = true;
+		}
+
+		// Other input
+		if (e.type == SDL_KEYDOWN) {
+
+			// Send to server
+			packet.down[i] = e.key.keysym.sym;
+
+			//printf("key down: %d\n", e.key.keysym.sym);
+
+			i++;
+			inputAvailable = true;
+		}
+
+	}
+
+	// Send only if input is available
+	if (inputAvailable) {
+
+		//printf("K||send\n");
+		int ret = sendto(
+			UDPSendSocket,
+			(char*)&packet,
+			sizeof(packet),
+			0,
+			(const sockaddr*)&UDPSendAddress,
+			sizeof(UDPSendAddress)
+		);
+
+		if (ret < 0) {
+			printf("UDP packet send failed: %d\n", WSAGetLastError());
+		}
+	}
+}
+
 // Main render loop
 void renderLoop() {
 
-	bool quit = false;
+	quit = false;
 	
 	while (!quit) {
 
-		UDPPacket packet = nextPacket();
+		processInput();
+
+		UDPRecvPacket packet = nextPacket();
 
 		// Save packet, render if frame complete
 		processPacket(packet);
 	}
 }
 
-
-
-
-
-
-
-
-
-//------------------------------------------------
-//------------------------------------------------
-//------------------------------------------------
-//bool quit;
-//
-//SOCKET serverSocket;
-//sockaddr_in serverSocketAddress;
-//
-//const char* SOCKET_ADDRESS = "127.0.0.1";
-//const int SOCKET_PORT = 8880;
-//
-//struct UDPInputPacket {
-//	char c;
-//};
-//
-//void initiSocket() {
-//	// Initialise winsock
-//	WSADATA wsaData;
-//	int ret = WSAStartup(MAKEWORD(2, 2), &wsaData);
-//	if (ret != 0) {
-//		printf("WSA init failed: %d\n", WSAGetLastError());
-//		exit(EXIT_FAILURE);
-//	}
-//
-//
-//	// Configure address
-//	serverSocketAddress.sin_family = AF_INET;
-//	serverSocketAddress.sin_addr.s_addr = inet_addr(SOCKET_ADDRESS);
-//	serverSocketAddress.sin_port = htons(SOCKET_PORT);
-//
-//	// Initialize the socket
-//	serverSocket = socket(PF_INET, SOCK_DGRAM, 0);
-//	if (serverSocket < 0) {
-//		printf("Socket init failed: %d\n", WSAGetLastError());
-//		exit(EXIT_FAILURE);
-//	}
-//
-//	// DO NOT, NO, PLEASE DO NOT BIND THE SOCKET!
-//	// IT WILL MAKE IT IMPOSSIBLE TO SEND PACKETS
-//	// AND WILL COST FAR TOO MUCH TIME TO FIGURE OUT WHAT WAS WRONG
-//}
-//
-//void inputLoop() {
-//	// Get input
-//	// ...
-//	 //Handle events on queue
-//
-//	printf("K||input loop\n");
-//
-//	UDPInputPacket packet;
-//	packet.c = 'A';
-//
-//	while (!quit) {
-//
-//		//SDL_Event e;
-//		//int i = 0;
-//		//while (SDL_PollEvent(&e) != 0) {
-//
-//		//	if (i > 8) {
-//		//		printf("Too many concurrent user inputs, some lost");
-//		//	}
-//
-//		//	// User requests quit
-//		//	if (e.type == SDL_QUIT) {
-//		//		quit = true;
-//		//	}
-//
-//		//	// Other input
-//		//	if (e.type == SDL_KEYDOWN) {
-//
-//		//		// Send to server
-//		//		packet.down[i] = e.key.keysym.sym;
-//		//		i++;
-//		//	}
-//
-//		//}
-//
-//		printf("K||send\n");
-//		int ret = sendto(
-//			serverSocket,
-//			(char*)&packet,
-//			sizeof(packet),
-//			0,
-//			(const sockaddr*)&serverSocketAddress,
-//			sizeof(serverSocketAddress)
-//		);
-//
-//		if (ret < 0) {
-//			printf("UDP packet send failed: %d\n", WSAGetLastError());
-//		}
-//	}
-//}
-//
-//void startServer() {
-//	printf("K||start\n");
-//
-//	initSocket();
-//	inputLoop();
-//}
-
 int main(int argc, char* args[]) {
 
 	initDecoder();
 	initRenderer();
-	initSocket();
+	initReceiverSocket();
+	initServerSocket();
 
-	InputServer *server = new InputServer();
-	std::thread inputServerThread(&InputServer::startServer, server);
-
+	// Show video stream from game server
 	renderLoop();
 
 	closeRenderer();
-	inputServerThread.join();
-
-	//initiSocket();
-	//startServer();
 	
 	return EXIT_SUCCESS;
 }
