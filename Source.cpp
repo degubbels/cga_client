@@ -28,8 +28,16 @@ struct UDPRecvHeader {
 	uint32_t framesize;
 };
 
+struct UDPRecvGameInfo {
+	float currentTime;
+	bool prestart;
+	bool won;
+	bool lost;
+};
+
 struct UDPRecvPacket {
 	UDPRecvHeader header;
+	UDPRecvGameInfo gameinfo;
 	char packet[PACKET_SIZE] = {0};
 };
 
@@ -37,6 +45,8 @@ struct UDPRecvPacket {
 std::map<int, char*> frameMap;
 std::map<int, int> fragsReceived;
 std::map<int, int> frameSize;
+
+UDPRecvGameInfo latestGameInfo;
 
 // Static frame information
 const int FRAME_WIDTH = 1280;
@@ -262,11 +272,35 @@ AVFrame* decodeFrame(int frameIndex) {
 }
 
 // ImGUI render
-void renderGUI() {
+void renderGUI(UDPRecvGameInfo gameInfo) {
 	ImGui::NewFrame();
 
+	ImGui::SetNextWindowSize(ImVec2(300, 200));
 	ImGui::Begin("game", NULL, NULL);
-	ImGui::Text("Servas");
+
+	if (gameInfo.prestart) {
+		ImGui::TextColored(ImVec4(0.2, 0.3, 1, 1), "Welcome to the game!");
+	}
+
+	if (!(gameInfo.won || gameInfo.lost)) {
+		ImGui::Text("Reach the large cube as fast as you can");
+		ImGui::Text("Make sure to avoid the small cubes");
+		ImGui::Text("Move forward with [W]");
+		ImGui::Text("Turn with [A] [D]");
+	}
+
+	if (gameInfo.prestart) {
+		ImGui::Text("Press [ENTER] to start");
+	}  else if (gameInfo.won) {
+		ImGui::TextColored(ImVec4(0.2, 0.3, 1, 1), "You won");
+		ImGui::Text("Press [ENTER] to start again");
+	} else if (gameInfo.lost) {
+		ImGui::TextColored(ImVec4(0.2, 0.3, 1, 1), "You lost");
+		ImGui::Text("Press [ENTER] to start again");
+	} else {
+		ImGui::TextColored(ImVec4(0.2, 0.3, 1, 1), "Time left: %004.1lf", gameInfo.currentTime);
+	}
+
 	ImGui::End();
 
 	ImGui::Render();
@@ -296,7 +330,7 @@ void renderFrame(int frameIndex) {
 	// Render texture to screen
 	SDL_RenderCopy(sdlRenderer, sdlTexture, NULL, NULL);
 
-	renderGUI();
+	renderGUI(latestGameInfo);
 
 	// Update screen
 	SDL_RenderPresent(sdlRenderer);
@@ -315,7 +349,7 @@ UDPRecvPacket nextPacket() {
 	int ret = recvfrom(
 		UDPRecvSocket,
 		(char*)UDPRecvBuffer,
-		PACKET_SIZE + sizeof(UDPRecvHeader),
+		sizeof(UDPRecvPacket),
 		0,
 		(sockaddr*)&UDPRecvAddress,
 		&UDP_RECEIVE_ADDRESS_LENGTH
@@ -334,6 +368,8 @@ UDPRecvPacket nextPacket() {
 // Add the given packet to the corresponding frame
 // If frame is now complete, render it
 void processPacket(UDPRecvPacket packet) {
+
+	latestGameInfo = packet.gameinfo;
 
 	int currentFrame = packet.header.nframe;
 	int fragmentCount = packet.header.nfrags;
