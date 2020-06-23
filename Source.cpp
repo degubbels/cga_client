@@ -63,6 +63,7 @@ SDL_Renderer* sdlRenderer;
 //
 struct UDPInputPacket {
 	SDL_Keycode down[8];
+	SDL_Keycode up[8];
 };
 
 // Send socket
@@ -269,6 +270,11 @@ void renderFrame(int frameIndex) {
 
 	// Update screen
 	SDL_RenderPresent(sdlRenderer);
+
+	// Destroy raw frame data
+	frameSize.erase(frameIndex);
+	fragsReceived.erase(frameIndex);
+	frameMap.erase(frameIndex);
 }
 
 // Wait until the next packet arrives
@@ -342,30 +348,39 @@ void processInput() {
 	bool inputAvailable = false;
 
 	SDL_Event e;
-	int i = 0;
+	int cDown = 0;
+	int cUp = 0;
 	while (SDL_PollEvent(&e) != 0) {
 
-		if (i > 8) {
+		if (cDown > 8 || cUp > 8) {
 			printf("Too many concurrent user inputs, some lost");
+			break;
 		}
 
 		// User requests quit
 		if (e.type == SDL_QUIT) {
-			//quit = true;
+			quit = true;
 		}
 
 		// Other input
 		if (e.type == SDL_KEYDOWN) {
 
 			// Send to server
-			packet.down[i] = e.key.keysym.sym;
+			packet.down[cDown] = e.key.keysym.sym;
 
-			//printf("key down: %d\n", e.key.keysym.sym);
-
-			i++;
+			cDown++;
 			inputAvailable = true;
 		}
 
+		// Other input
+		if (e.type == SDL_KEYUP) {
+
+			// Send to server
+			packet.up[cUp] = e.key.keysym.sym;
+
+			cUp++;
+			inputAvailable = true;
+		}
 	}
 
 	// Send only if input is available
